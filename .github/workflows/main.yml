@@ -1,0 +1,110 @@
+name: Build ReachMyAbility
+
+on:
+  workflow_dispatch:
+    inputs: 
+      rootful:
+        description: "Build ReachMyAbility for rootful jailbreak"
+        type: boolean
+        required: true
+        default: false
+
+      rootless:
+        description: "Build ReachMyAbility for rootless jailbreak"
+        type: boolean
+        required: true
+        default: true
+
+      roothide:
+        description: "Build ReachMyAbility for roothide jailbreak"
+        type: boolean
+        required: true
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ReachMyAbility
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Main
+        uses: actions/checkout@v4
+        with:
+          path: main
+          submodules: recursive
+
+      - name: Install Dependencies
+        run: brew install make ldid
+
+      - name: Set PATH environment variable
+        run: echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+
+      - name: Cache Theos
+        id: theos
+        uses: actions/cache@v4
+        env:
+          cache-name: theos_cache_c824e35
+        with:
+          path: theos/
+          key: ${{ env.cache-name }}
+          restore-keys: ${{ env.cache-name }}
+
+      - name: Setup Theos
+        if: steps.theos.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: roothide/theos
+          ref: c824e3569032551f1ce8c6eab6c2611bbf4f7bad
+          path: ${{ github.workspace }}/theos
+          submodules: recursive
+
+      - name: Download iOS SDK
+        if: steps.theos.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/theos/sdks/
+          cd sdks
+          git sparse-checkout set --no-cone iPhoneOS16.5.sdk
+          git checkout
+          mv *.sdk $THEOS/sdks
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Build Tweak
+        id: build_package
+        run: |
+          cd ${{ github.workspace }}/main
+
+          if [ "${{ github.event.inputs.rootful }}" == "true" ]; then
+            echo -e "\nBuilding for rootful jailbreak..."
+            make clean package
+          fi
+
+          if [ "${{ github.event.inputs.rootless }}" == "true" ]; then
+            echo -e "\nBuilding for rootful jailbreak..."
+            make clean package ROOTLESS=1
+          fi
+
+          if [ "${{ github.event.inputs.roothide }}" == "true" ]; then
+            echo -e "\nBuilding for rootful jailbreak..."
+            make clean package ROOTHIDE=1
+          fi
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ github.run_number }}"
+          name: ReachMyAbility-v${{ github.run_number }}
+          files: main/packages/*.deb
+          draft: false
+
+      - name: Output Release URL
+        run: |
+          echo "::notice::Release available at: https://github.com/${{ github.repository }}/releases"
